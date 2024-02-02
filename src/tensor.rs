@@ -1,9 +1,12 @@
 use std::ptr::NonNull;
 
+use num_traits::{One, Zero};
+use rawpointer::PointerExt;
+
 use crate::{
-    allocator::Allocator,
-    dimension::Dimensions,
-    ops::Ops,
+    backend::Backend,
+    dimension::{Dimensions, offset_from_low_addr_ptr_to_logical_ptr},
+    shape_builder::ShapeBuilder,
     storage::{
         traits::{RawStorage, RawStorageClone, StorageOwned},
         OwnedStorage,
@@ -11,7 +14,7 @@ use crate::{
     },
 };
 
-pub struct TensorBase<S, D, O>
+pub struct TensorBase<S, D>
 where
     S: RawStorage,
 {
@@ -19,37 +22,52 @@ where
     pub(crate) ptr: NonNull<S::Elem>,
     pub(crate) dims: D,
     pub(crate) strides: D,
-    pub(crate) ops: O,
 }
 
-type ArcTensor<T, A, D, O> = TensorBase<OwnedArcStorage<T, A>, D, O>;
+type ArcTensor<T, B, D> = TensorBase<OwnedArcStorage<T, B>, D>;
 
-impl<T, A, S, D, O> TensorBase<S, D, O>
+impl<T, B, S, D> TensorBase<S, D>
 where
-    A: Allocator,
-    S: RawStorage<Elem = T, Allocator = A>,
+    B: Backend,
+    S: RawStorage<Elem = T, Backend = B>,
     D: Dimensions,
-    O: Ops,
 {
-    pub fn to_owned(&self) -> TensorBase<OwnedStorage<T, A>, D, O>
-    where
-        S: RawStorageClone,
-    {
-        let mut storage = unsafe {
-            self.storage.to_owned_with_ptr(self.ptr)
-        };
-        let ptr = storage.as_nonnull_mut();
+    pub fn is_contiguous(&self) -> bool {
+        D::is_contiguous(&self.dims, &self.strides)
+    }
 
-        TensorBase {
-            storage,
-            ptr,
-            dims: self.dims.clone(),
-            strides: self.strides.clone(),
-            ops: self.ops.clone(),
+    pub fn as_slice_memory_order(&self) -> Option<&[T]> {
+        if self.is_contiguous() {
+            let offset = offset_from_low_addr_ptr_to_logical_ptr(&self.dims, &self.strides);
+            unsafe {
+                Some(std::slice::from_raw_parts(
+                    self.ptr.sub(offset).as_ptr(), self.dims.size()
+                ))
+            }
+        } else {
+            None
         }
     }
 
-    pub fn into_shared(self) -> ArcTensor<T, A, D, O>
+    pub fn to_owned(&self) -> TensorBase<OwnedStorage<T, B>, D> {
+        if let Some(slice) = self.as_slice_memory_order() {
+            let src_ptr = slice.as_ptr();
+            let size = slice.len();
+            let backend = self.storage.backend();
+            let (mut storage, ptr) = OwnedStorage::empty(size, backend);
+            unsafe { backend.copy(src_ptr, ptr.as_ptr(), size); }
+            TensorBase {
+                storage,
+                ptr,
+                dims: self.dims.clone(),
+                strides: self.strides.clone(),
+            }
+        } else {
+            unimplemented!("to_owned for non-contiguous tensors")
+        }
+    }
+
+    pub fn into_shared(self) -> ArcTensor<T, B, D>
     where
         S: StorageOwned
     {
@@ -60,16 +78,56 @@ where
             ptr: self.ptr,
             dims: self.dims,
             strides: self.strides,
-            ops: self.ops,
         }
     }
 }
 
-impl<S, D, O> Clone for TensorBase<S, D, O>
+impl<T, B, S, D> TensorBase<S, D>
+where
+    B: Backend,
+    S: StorageOwned<Elem = T, Backend = B>,
+    D: Dimensions,
+{
+    pub fn zeros<Sh>(shape: Sh) -> Self
+    where
+        T: Clone + Zero,
+        Sh: ShapeBuilder<Dims = D>,
+    {
+        Self::from_elem(shape, T::zero())
+    }
+
+    pub fn ones<Sh>(shape: Sh) -> Self
+    where
+        T: Clone + One,
+        Sh: ShapeBuilder<Dims = D>,
+    {
+        Self::from_elem(shape, T::one())
+    }
+
+    pub fn from_elem<Sh>(shape: Sh, elem: T) -> Self
+    where
+        T: Clone,
+        Sh: ShapeBuilder<Dims = D>,
+    {
+        let shape = shape.into_shape();
+        let dims = shape.dims;
+        let strides = dims.default_strides();
+        let size = shape.size();
+        let (mut storage, ptr) = S::empty(size, S::Backend::default());
+        storage.fill(elem);
+        Self {
+            storage,
+            ptr,
+            dims,
+            strides,
+        }
+    }
+}
+
+impl<S, D> Clone for TensorBase<S, D>
 where
     S: RawStorageClone,
     D: Dimensions,
-    O: Ops,
 {
     fn clone(&self) -> Self {
         let (storage, ptr) = unsafe {
@@ -80,7 +138,6 @@ where
             ptr,
             dims: self.dims.clone(),
             strides: self.strides.clone(),
-            ops: self.ops.clone(),
         }
     }
 
@@ -93,6 +150,5 @@ where
         };
         self.dims.clone_from(&other.dims);
         self.strides.clone_from(&other.strides);
-        self.ops.clone_from(&other.ops);
     }
 }

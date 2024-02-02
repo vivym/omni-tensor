@@ -1,7 +1,10 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::index::Ix;
-use super::dims::Dims;
+use super::{
+    dimensions_trait::Dimensions,
+    dims::Dims,
+};
 
 const CAP: usize = 4;
 
@@ -133,3 +136,33 @@ impl DynDimsImpl {
 }
 
 pub type DynDims = Dims<DynDimsImpl>;
+
+impl Dimensions for DynDims {
+    const NDIM: Option<usize> = None;
+
+    type Pattern = Self;
+
+    type Smaller = Dims<[Ix; 8]>;
+
+    type Larger = Self;
+
+    fn ndim(&self) -> usize {
+        self.0.len()
+    }
+
+    fn into_pattern(self) -> Self::Pattern {
+        self
+    }
+
+    fn as_slice(&self) -> &[Ix] {
+        &self.0
+    }
+
+    fn as_slice_mut(&mut self) -> &mut [Ix] {
+        &mut self.0
+    }
+
+    fn zeros(ndim: usize) -> Self {
+        DynDims::zeros(ndim)
+    }
+}

@@ -1,13 +1,15 @@
 use std::ptr::NonNull;
 
-use crate::{dimension::Dimensions, tensor::TensorBase, allocator::Allocator, ops::Ops};
+use crate::{dimension::Dimensions, tensor::TensorBase, backend::Backend};
 use super::{OwnedStorage, OwnedArcStorage};
 
 pub unsafe trait RawStorage: Sized {
     type Elem;
-    type Allocator: Allocator;
+    type Backend: Backend;
 
     fn _is_pointer_inbounds(&self, ptr: *const Self::Elem) -> bool;
+
+    fn backend(&self) -> Self::Backend;
 }
 
 pub unsafe trait RawStorageClone: RawStorage {
@@ -22,39 +24,36 @@ pub unsafe trait RawStorageClone: RawStorage {
         ptr
     }
 
-    unsafe fn to_owned_with_ptr(
-        &self, ptr: NonNull<Self::Elem>
-    )-> OwnedStorage<Self::Elem, Self::Allocator>;
+    // unsafe fn to_owned_with_ptr(
+    //     &self, ptr: NonNull<Self::Elem>
+    // )-> OwnedStorage<Self::Elem, Self::Backend>;
 }
 
 pub unsafe trait RawStorageMut: RawStorageClone {
-    fn try_ensure_unique<D, O>(self_: &mut TensorBase<Self, D, O>)
+    fn try_ensure_unique<D>(self_: &mut TensorBase<Self, D>)
     where
-        D: Dimensions,
-        O: Ops;
+        D: Dimensions;
 
     fn try_is_unique(&mut self) -> Option<bool>;
 }
 
 pub unsafe trait Storage: RawStorageClone {
-    fn into_owned<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>
+    fn into_owned<D>(
+        self_: TensorBase<Self, D>
+    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>
     where
-        D: Dimensions,
-        O: Ops;
+        D: Dimensions;
 
-    fn try_into_owned_nocopy<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>, TensorBase<Self, D, O>>;
+    fn try_into_owned_nocopy<D>(
+        self_: TensorBase<Self, D>
+    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>, TensorBase<Self, D>>;
 
-    fn to_shared<D, O>(
-        self_: &TensorBase<Self, D, O>
-    ) -> TensorBase<OwnedArcStorage<Self::Elem, Self::Allocator>, D, O>
+    fn to_shared<D>(
+        self_: &TensorBase<Self, D>
+    ) -> TensorBase<OwnedArcStorage<Self::Elem, Self::Backend>, D>
     where
         Self::Elem: Clone,
         D: Dimensions,
-        O: Ops
     {
         self_.to_owned().into_shared()
     }
@@ -62,10 +61,9 @@ pub unsafe trait Storage: RawStorageClone {
 
 pub unsafe trait StorageMut: Storage + RawStorageMut {
     // ensure_unique
-    fn ensure_unique<D, O>(self_: &mut TensorBase<Self, D, O>)
+    fn ensure_unique<D>(self_: &mut TensorBase<Self, D>)
     where
         D: Dimensions,
-        O: Ops,
     {
         Self::try_ensure_unique(self_)
     }
@@ -76,9 +74,13 @@ pub unsafe trait StorageMut: Storage + RawStorageMut {
 }
 
 pub unsafe trait StorageOwned: Storage {
-    fn empty(size: usize, allocator: Self::Allocator) -> Self;
+    fn empty(size: usize, backend: Self::Backend) -> (Self, NonNull<Self::Elem>);
 
-    fn into_shared(self) -> OwnedArcStorage<Self::Elem, Self::Allocator>;
+    unsafe fn from_raw_ptr(ptr: NonNull<Self::Elem>, size: usize, backend: Self::Backend) -> Self;
+
+    fn fill(&mut self, value: Self::Elem);
+
+    fn into_shared(self) -> OwnedArcStorage<Self::Elem, Self::Backend>;
 }
 
 pub unsafe trait StorageShared: Storage + RawStorageClone + Clone {}

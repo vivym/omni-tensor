@@ -3,7 +3,7 @@ use std::{
     ptr::NonNull,
 };
 
-use crate::{allocator::Allocator, tensor::TensorBase, dimension::Dimensions, ops::Ops};
+use crate::{tensor::TensorBase, dimension::Dimensions, backend::Backend};
 use super::{
     OwnedStorage,
     traits::{
@@ -16,19 +16,19 @@ use super::{
 };
 
 #[derive(Copy, Clone)]
-pub struct RawViewStorage<T, A> {
+pub struct RawViewStorage<T, B> {
     ptr: PhantomData<T>,
-    allocator: A,
+    backend: B,
 }
 
 #[derive(Copy, Clone)]
-pub struct ViewStorage<T, A> {
+pub struct ViewStorage<T, B> {
     ptr: PhantomData<T>,
-    allocator: A,
+    backend: B,
 }
 
 // impl<T, A> RawViewStorage<T, A> {
-//     pub(crate) fn new(allocator: A) -> Self {
+//     pub(crate) fn new() -> Self {
 //         Self {
 //             ptr: PhantomData,
 //             allocator,
@@ -36,198 +36,141 @@ pub struct ViewStorage<T, A> {
 //     }
 // }
 
-impl<T, A> ViewStorage<T, A> {
-    pub(crate) fn new(allocator: A) -> Self {
+impl<T, B> ViewStorage<T, B> {
+    pub(crate) fn new(backend: B) -> Self {
         Self {
             ptr: PhantomData,
-            allocator,
+            backend,
         }
     }
 }
 
-unsafe impl<T, A> RawStorage for RawViewStorage<*const T, A>
-where
-    A: Allocator
-{
+unsafe impl<T, B> RawStorage for RawViewStorage<*const T, B> where B: Backend {
     type Elem = T;
-    type Allocator = A;
+    type Backend = B;
 
     #[inline(always)]
     fn _is_pointer_inbounds(&self, _ptr: *const Self::Elem) -> bool { true }
+
+    fn backend(&self) -> Self::Backend {
+        self.backend
+    }
 }
 
-unsafe impl<T, A> RawStorageClone for RawViewStorage<*const T, A>
-where
-    A: Allocator
-{
+unsafe impl<T, B> RawStorageClone for RawViewStorage<*const T, B> where B: Backend {
     unsafe fn clone_with_ptr(&self, ptr: NonNull<Self::Elem>) -> (Self, NonNull<Self::Elem>) {
-        (Self { ptr: self.ptr, allocator: self.allocator.clone() }, ptr)
-    }
-
-    unsafe fn to_owned_with_ptr(
-        &self, _ptr: NonNull<Self::Elem>
-    )-> OwnedStorage<Self::Elem, Self::Allocator> {
-        // TODO: implement this
-        unimplemented!("RawViewStorage::to_owned_with_ptr")
+        (*self, ptr)
     }
 }
 
-unsafe impl<T, A> RawStorage for RawViewStorage<*mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<T, B> RawStorage for RawViewStorage<*mut T, B> where B: Backend {
     type Elem = T;
-    type Allocator = A;
+    type Backend = B;
 
     #[inline(always)]
     fn _is_pointer_inbounds(&self, _ptr: *const Self::Elem) -> bool { true }
+
+    fn backend(&self) -> Self::Backend {
+        self.backend
+    }
 }
 
-unsafe impl<T, A> RawStorageClone for RawViewStorage<*mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<T, B> RawStorageClone for RawViewStorage<*mut T, B> where B: Backend {
     unsafe fn clone_with_ptr(&self, ptr: NonNull<Self::Elem>) -> (Self, NonNull<Self::Elem>) {
-        (Self { ptr: self.ptr, allocator: self.allocator.clone() }, ptr)
-    }
-
-    unsafe fn to_owned_with_ptr(
-        &self, _ptr: NonNull<Self::Elem>
-    )-> OwnedStorage<Self::Elem, Self::Allocator> {
-        // TODO: implement this
-        unimplemented!("RawViewStorage::to_owned_with_ptr")
+        (*self, ptr)
     }
 }
 
-unsafe impl<T, A> RawStorageMut for RawViewStorage<*mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<T, B> RawStorageMut for RawViewStorage<*mut T, B> where B: Backend {
     #[inline]
-    fn try_ensure_unique<D, O>(_: &mut TensorBase<Self, D, O>)
+    fn try_ensure_unique<D>(_: &mut TensorBase<Self, D>)
     where
-        D: Dimensions,
-        O: Ops,
+        D: Dimensions
     {}
 
     #[inline]
     fn try_is_unique(&mut self) -> Option<bool> { None }
 }
 
-unsafe impl<'a, T, A> RawStorage for ViewStorage<&'a T, A>
-where
-    A: Allocator
-{
+unsafe impl<'a, T, B> RawStorage for ViewStorage<&'a T, B> where B: Backend {
     type Elem = T;
-    type Allocator = A;
+    type Backend = B;
 
     #[inline(always)]
     fn _is_pointer_inbounds(&self, _ptr: *const Self::Elem) -> bool { true }
+
+    fn backend(&self) -> Self::Backend {
+        self.backend
+    }
 }
 
-unsafe impl<'a, T, A> RawStorageClone for ViewStorage<&'a T, A>
-where
-    A: Allocator
-{
+unsafe impl<'a, T, B> RawStorageClone for ViewStorage<&'a T, B> where B: Backend {
     unsafe fn clone_with_ptr(&self, ptr: NonNull<Self::Elem>) -> (Self, NonNull<Self::Elem>) {
-        (Self { ptr: self.ptr, allocator: self.allocator.clone() }, ptr)
-    }
-
-    unsafe fn to_owned_with_ptr(
-        &self, _ptr: NonNull<Self::Elem>
-    )-> OwnedStorage<Self::Elem, Self::Allocator> {
-        // TODO: implement this
-        unimplemented!("ViewStorage::to_owned_with_ptr")
+        (*self, ptr)
     }
 }
 
-unsafe impl<'a, T, A> Storage for ViewStorage<&'a T, A>
-where
-    A: Allocator
-{
-    fn into_owned<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>
+unsafe impl<'a, T, B> Storage for ViewStorage<&'a T, B> where B: Backend {
+    fn into_owned<D>(
+        self_: TensorBase<Self, D>
+    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>
     where
-        D: Dimensions,
-        O: Ops
+        D: Dimensions
     {
         self_.to_owned()
     }
 
-    fn try_into_owned_nocopy<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>, TensorBase<Self, D, O>>
-    {
+    fn try_into_owned_nocopy<D>(
+        self_: TensorBase<Self, D>
+    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>, TensorBase<Self, D>> {
         Err(self_)
     }
 }
 
-unsafe impl<'a, T, A> RawStorage for ViewStorage<&'a mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<'a, T, B> RawStorage for ViewStorage<&'a mut T, B> where B: Backend {
     type Elem = T;
-    type Allocator = A;
+    type Backend = B;
 
     #[inline(always)]
     fn _is_pointer_inbounds(&self, _ptr: *const Self::Elem) -> bool { true }
+
+    fn backend(&self) -> Self::Backend {
+        self.backend
+    }
 }
 
-unsafe impl<'a, T, A> RawStorageClone for ViewStorage<&'a mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<'a, T, B> RawStorageClone for ViewStorage<&'a mut T, B> where B: Backend {
     unsafe fn clone_with_ptr(&self, ptr: NonNull<Self::Elem>) -> (Self, NonNull<Self::Elem>) {
-        (Self { ptr: self.ptr, allocator: self.allocator.clone() }, ptr)
-    }
-
-    unsafe fn to_owned_with_ptr(
-        &self, _ptr: NonNull<Self::Elem>
-    )-> OwnedStorage<Self::Elem, Self::Allocator> {
-        // TODO: implement this
-        unimplemented!("ViewStorage::to_owned_with_ptr")
+        (*self, ptr)
     }
 }
 
-unsafe impl<'a, T, A> RawStorageMut for ViewStorage<&'a mut T, A>
-where
-    A: Allocator
-{
+unsafe impl<'a, T, B> RawStorageMut for ViewStorage<&'a mut T, B> where B: Backend {
     #[inline]
-    fn try_ensure_unique<D, O>(_: &mut TensorBase<Self, D, O>)
+    fn try_ensure_unique<D>(_: &mut TensorBase<Self, D>)
     where
-        D: Dimensions,
-        O: Ops,
+        D: Dimensions
     {}
 
     #[inline]
     fn try_is_unique(&mut self) -> Option<bool> { Some(true) }
 }
 
-unsafe impl<'a, T, A> Storage for ViewStorage<&'a mut T, A>
-where
-    A: Allocator
-{
-    fn into_owned<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>
+unsafe impl<'a, T, B> Storage for ViewStorage<&'a mut T, B> where B: Backend {
+    fn into_owned<D>(
+        self_: TensorBase<Self, D>
+    ) -> TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>
     where
-        D: Dimensions,
-        O: Ops
+        D: Dimensions
     {
         self_.to_owned()
     }
 
-    fn try_into_owned_nocopy<D, O>(
-        self_: TensorBase<Self, D, O>
-    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Allocator>, D, O>, TensorBase<Self, D, O>>
-    {
+    fn try_into_owned_nocopy<D>(
+        self_: TensorBase<Self, D>
+    ) -> Result<TensorBase<OwnedStorage<Self::Elem, Self::Backend>, D>, TensorBase<Self, D>> {
         Err(self_)
     }
 }
 
-unsafe impl<'a, T, A> StorageMut for ViewStorage<&'a mut T, A>
-where
-    A: Allocator
-{}
+unsafe impl<'a, T, B> StorageMut for ViewStorage<&'a mut T, B> where B: Backend {}
